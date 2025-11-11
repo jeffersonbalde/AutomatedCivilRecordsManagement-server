@@ -1,5 +1,5 @@
 <?php
-// app/Http/Controllers/BirthRecordController.php
+// app/Http/Controllers/BirthRecordController.php - COMPLETE VERSION
 namespace App\Http\Controllers;
 
 use App\Models\BirthRecord;
@@ -11,24 +11,28 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Auth;
 
 class BirthRecordController extends Controller
 {
-    // In BirthRecordController.php - Update index method to support larger data fetch
     public function index(Request $request)
     {
         try {
-            $query = BirthRecord::with(['mother', 'father', 'parentsMarriage', 'attendant', 'informant', 'encodedBy'])
-                ->active();
+            $query = BirthRecord::with([
+                'mother',
+                'father',
+                'parentsMarriage',
+                'attendant',
+                'informant',
+                'encodedByStaff',
+                'encodedByAdmin'
+            ])->active();
 
-            // Search functionality (optional - can be removed if using only client-side search)
             if ($request->has('search') && !empty($request->search)) {
                 $searchTerm = $request->search;
                 $query->search($searchTerm);
             }
 
-            // Filter by date range (optional - can be removed if using only client-side filtering)
             if ($request->has('date_from') && !empty($request->date_from)) {
                 $query->where('date_of_birth', '>=', $request->date_from);
             }
@@ -37,13 +41,17 @@ class BirthRecordController extends Controller
                 $query->where('date_of_birth', '<=', $request->date_to);
             }
 
-            // Sort by latest first
             $query->orderBy('created_at', 'desc');
 
-            // Get per_page parameter with a higher default for initial load
-            $perPage = $request->get('per_page', 1000); // Increased default for client-side filtering
+            $perPage = $request->get('per_page', 1000);
 
             $records = $query->paginate($perPage);
+
+            $transformedRecords = $records->getCollection()->map(function ($record) {
+                return $this->transformBirthRecord($record);
+            });
+
+            $records->setCollection($transformedRecords);
 
             return response()->json([
                 'success' => true,
@@ -63,7 +71,6 @@ class BirthRecordController extends Controller
         }
     }
 
-    // In BirthRecordController.php - Enhanced checkDuplicate method
     public function checkDuplicate(Request $request)
     {
         try {
@@ -71,6 +78,7 @@ class BirthRecordController extends Controller
                 'child_first_name' => 'required|string',
                 'child_last_name' => 'required|string',
                 'date_of_birth' => 'required|date',
+                'exclude_id' => 'nullable|integer', // ADD THIS
             ]);
 
             if ($validator->fails()) {
@@ -81,26 +89,28 @@ class BirthRecordController extends Controller
                 ], 422);
             }
 
-            // Exact duplicate check
-            $exactDuplicate = BirthRecord::where('child_first_name', $request->child_first_name)
+            // Exact duplicate check - with optional exclusion
+            $query = BirthRecord::where('child_first_name', $request->child_first_name)
                 ->where('child_last_name', $request->child_last_name)
                 ->where('date_of_birth', $request->date_of_birth)
-                ->active()
-                ->first();
+                ->active();
 
-            // Fuzzy search for similar records
+            // Exclude specific ID if provided (for update operations)
+            if ($request->has('exclude_id') && $request->exclude_id) {
+                $query->where('id', '!=', $request->exclude_id);
+            }
+
+            $exactDuplicate = $query->first();
+
             $similarRecords = BirthRecord::where(function ($query) use ($request) {
-                // Same first name, similar last name
                 $query->where('child_first_name', $request->child_first_name)
                     ->where('child_last_name', 'like', "%{$request->child_last_name}%");
             })
                 ->orWhere(function ($query) use ($request) {
-                    // Similar first name, same last name
                     $query->where('child_first_name', 'like', "%{$request->child_first_name}%")
                         ->where('child_last_name', $request->child_last_name);
                 })
                 ->orWhere(function ($query) use ($request) {
-                    // Same name, different birth date within 30 days
                     $query->where('child_first_name', $request->child_first_name)
                         ->where('child_last_name', $request->child_last_name)
                         ->whereDate('date_of_birth', '>=', Carbon::parse($request->date_of_birth)->subDays(30))
@@ -129,14 +139,12 @@ class BirthRecordController extends Controller
         }
     }
 
-    // Store new birth record
     public function store(Request $request)
     {
         DB::beginTransaction();
 
         try {
             $validator = Validator::make($request->all(), [
-                // Child Information
                 'child_first_name' => 'required|string|max:255',
                 'child_middle_name' => 'nullable|string|max:255',
                 'child_last_name' => 'required|string|max:255',
@@ -147,13 +155,13 @@ class BirthRecordController extends Controller
                 'birth_address_house' => 'nullable|string|max:255',
                 'birth_address_barangay' => 'nullable|string|max:255',
                 'birth_address_city' => 'required|string|max:255',
+                'birth_address_province' => 'nullable|string|max:255',
                 'type_of_birth' => 'required|in:Single,Twin,Triplet,Quadruplet,Other',
                 'multiple_birth_order' => 'nullable|in:First,Second,Third,Fourth,Fifth',
                 'birth_order' => 'required|integer|min:1',
                 'birth_weight' => 'nullable|numeric|min:0.5|max:10',
                 'birth_notes' => 'nullable|string',
 
-                // Mother Information
                 'mother_first_name' => 'required|string|max:255',
                 'mother_middle_name' => 'nullable|string|max:255',
                 'mother_last_name' => 'required|string|max:255',
@@ -170,7 +178,6 @@ class BirthRecordController extends Controller
                 'mother_province' => 'required|string|max:255',
                 'mother_country' => 'required|string|max:255',
 
-                // Father Information
                 'father_first_name' => 'required|string|max:255',
                 'father_middle_name' => 'nullable|string|max:255',
                 'father_last_name' => 'required|string|max:255',
@@ -184,13 +191,11 @@ class BirthRecordController extends Controller
                 'father_province' => 'required|string|max:255',
                 'father_country' => 'required|string|max:255',
 
-                // Parents Marriage
                 'marriage_date' => 'nullable|date',
                 'marriage_place_city' => 'nullable|string|max:255',
                 'marriage_place_province' => 'nullable|string|max:255',
                 'marriage_place_country' => 'nullable|string|max:255',
 
-                // Attendant Information
                 'attendant_type' => 'required|in:Physician,Nurse,Midwife,Hilot,Other',
                 'attendant_name' => 'required|string|max:255',
                 'attendant_license' => 'nullable|string|max:255',
@@ -198,7 +203,6 @@ class BirthRecordController extends Controller
                 'attendant_address' => 'required|string|max:255',
                 'attendant_title' => 'required|string|max:255',
 
-                // Informant Information
                 'informant_first_name' => 'required|string|max:255',
                 'informant_middle_name' => 'nullable|string|max:255',
                 'informant_last_name' => 'required|string|max:255',
@@ -206,6 +210,9 @@ class BirthRecordController extends Controller
                 'informant_address' => 'required|string|max:255',
                 'informant_certification_accepted' => 'required|boolean',
             ]);
+
+            $user = Auth::user();
+            $encodedBy = $user->id;
 
             if ($validator->fails()) {
                 return response()->json([
@@ -215,7 +222,6 @@ class BirthRecordController extends Controller
                 ], 422);
             }
 
-            // Check for duplicates
             $duplicateCheck = BirthRecord::where('child_first_name', $request->child_first_name)
                 ->where('child_last_name', $request->child_last_name)
                 ->where('date_of_birth', $request->date_of_birth)
@@ -231,10 +237,8 @@ class BirthRecordController extends Controller
                 ], 409);
             }
 
-            // Generate registry number
             $registryNumber = $this->generateRegistryNumber();
 
-            // Create birth record
             $birthRecord = BirthRecord::create([
                 'registry_number' => $registryNumber,
                 'child_first_name' => $request->child_first_name,
@@ -254,10 +258,9 @@ class BirthRecordController extends Controller
                 'birth_weight' => $request->birth_weight,
                 'birth_notes' => $request->birth_notes,
                 'date_registered' => now(),
-                'encoded_by' => auth()->id(),
+                'encoded_by' => $encodedBy,
             ]);
 
-            // Create mother information
             ParentsInformation::create([
                 'birth_record_id' => $birthRecord->id,
                 'parent_type' => 'Mother',
@@ -278,7 +281,6 @@ class BirthRecordController extends Controller
                 'country' => $request->mother_country,
             ]);
 
-            // Create father information
             ParentsInformation::create([
                 'birth_record_id' => $birthRecord->id,
                 'parent_type' => 'Father',
@@ -296,7 +298,6 @@ class BirthRecordController extends Controller
                 'country' => $request->father_country,
             ]);
 
-            // Create parents marriage if provided
             if ($request->marriage_date || $request->marriage_place_city) {
                 ParentsMarriage::create([
                     'birth_record_id' => $birthRecord->id,
@@ -307,7 +308,6 @@ class BirthRecordController extends Controller
                 ]);
             }
 
-            // Create attendant information
             BirthAttendant::create([
                 'birth_record_id' => $birthRecord->id,
                 'attendant_type' => $request->attendant_type,
@@ -318,7 +318,6 @@ class BirthRecordController extends Controller
                 'attendant_title' => $request->attendant_title,
             ]);
 
-            // Create informant information
             Informant::create([
                 'birth_record_id' => $birthRecord->id,
                 'first_name' => $request->informant_first_name,
@@ -331,10 +330,22 @@ class BirthRecordController extends Controller
 
             DB::commit();
 
+            $birthRecord->load([
+                'mother',
+                'father',
+                'parentsMarriage',
+                'attendant',
+                'informant',
+                'encodedByStaff',
+                'encodedByAdmin'
+            ]);
+
+            $transformedRecord = $this->transformBirthRecord($birthRecord);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Birth record saved successfully!',
-                'data' => $birthRecord->load(['mother', 'father', 'parentsMarriage', 'attendant', 'informant']),
+                'data' => $transformedRecord,
                 'registry_number' => $registryNumber
             ]);
         } catch (\Exception $e) {
@@ -346,14 +357,12 @@ class BirthRecordController extends Controller
         }
     }
 
-    // In BirthRecordController.php - Add update method
     public function update(Request $request, $id)
     {
         DB::beginTransaction();
 
         try {
             $validator = Validator::make($request->all(), [
-                // Child Information
                 'child_first_name' => 'required|string|max:255',
                 'child_middle_name' => 'nullable|string|max:255',
                 'child_last_name' => 'required|string|max:255',
@@ -364,13 +373,13 @@ class BirthRecordController extends Controller
                 'birth_address_house' => 'nullable|string|max:255',
                 'birth_address_barangay' => 'nullable|string|max:255',
                 'birth_address_city' => 'required|string|max:255',
+                'birth_address_province' => 'nullable|string|max:255',
                 'type_of_birth' => 'required|in:Single,Twin,Triplet,Quadruplet,Other',
                 'multiple_birth_order' => 'nullable|in:First,Second,Third,Fourth,Fifth',
                 'birth_order' => 'required|integer|min:1',
                 'birth_weight' => 'nullable|numeric|min:0.5|max:10',
                 'birth_notes' => 'nullable|string',
 
-                // Mother Information
                 'mother_first_name' => 'required|string|max:255',
                 'mother_middle_name' => 'nullable|string|max:255',
                 'mother_last_name' => 'required|string|max:255',
@@ -387,7 +396,6 @@ class BirthRecordController extends Controller
                 'mother_province' => 'required|string|max:255',
                 'mother_country' => 'required|string|max:255',
 
-                // Father Information
                 'father_first_name' => 'required|string|max:255',
                 'father_middle_name' => 'nullable|string|max:255',
                 'father_last_name' => 'required|string|max:255',
@@ -401,13 +409,11 @@ class BirthRecordController extends Controller
                 'father_province' => 'required|string|max:255',
                 'father_country' => 'required|string|max:255',
 
-                // Parents Marriage
                 'marriage_date' => 'nullable|date',
                 'marriage_place_city' => 'nullable|string|max:255',
                 'marriage_place_province' => 'nullable|string|max:255',
                 'marriage_place_country' => 'nullable|string|max:255',
 
-                // Attendant Information
                 'attendant_type' => 'required|in:Physician,Nurse,Midwife,Hilot,Other',
                 'attendant_name' => 'required|string|max:255',
                 'attendant_license' => 'nullable|string|max:255',
@@ -415,7 +421,6 @@ class BirthRecordController extends Controller
                 'attendant_address' => 'required|string|max:255',
                 'attendant_title' => 'required|string|max:255',
 
-                // Informant Information
                 'informant_first_name' => 'required|string|max:255',
                 'informant_middle_name' => 'nullable|string|max:255',
                 'informant_last_name' => 'required|string|max:255',
@@ -432,14 +437,13 @@ class BirthRecordController extends Controller
                 ], 422);
             }
 
-            // Find the birth record
             $birthRecord = BirthRecord::active()->findOrFail($id);
 
-            // Check for duplicates (excluding current record)
+            // FIXED: Check for duplicates (excluding current record) - PROPERLY exclude current record
             $duplicateCheck = BirthRecord::where('child_first_name', $request->child_first_name)
                 ->where('child_last_name', $request->child_last_name)
                 ->where('date_of_birth', $request->date_of_birth)
-                ->where('id', '!=', $id) // Exclude current record
+                ->where('id', '!=', $id) // Exclude current record - THIS SHOULD WORK
                 ->active()
                 ->first();
 
@@ -452,7 +456,6 @@ class BirthRecordController extends Controller
                 ], 409);
             }
 
-            // Update birth record
             $birthRecord->update([
                 'child_first_name' => $request->child_first_name,
                 'child_middle_name' => $request->child_middle_name,
@@ -472,7 +475,6 @@ class BirthRecordController extends Controller
                 'birth_notes' => $request->birth_notes,
             ]);
 
-            // Update mother information
             if ($birthRecord->mother) {
                 $birthRecord->mother->update([
                     'first_name' => $request->mother_first_name,
@@ -493,7 +495,6 @@ class BirthRecordController extends Controller
                 ]);
             }
 
-            // Update father information
             if ($birthRecord->father) {
                 $birthRecord->father->update([
                     'first_name' => $request->father_first_name,
@@ -511,7 +512,6 @@ class BirthRecordController extends Controller
                 ]);
             }
 
-            // Update parents marriage
             if ($birthRecord->parentsMarriage) {
                 if ($request->marriage_date || $request->marriage_place_city) {
                     $birthRecord->parentsMarriage->update([
@@ -521,11 +521,9 @@ class BirthRecordController extends Controller
                         'marriage_place_country' => $request->marriage_place_country,
                     ]);
                 } else {
-                    // Delete marriage record if all fields are empty
                     $birthRecord->parentsMarriage->delete();
                 }
             } else if ($request->marriage_date || $request->marriage_place_city) {
-                // Create new marriage record
                 ParentsMarriage::create([
                     'birth_record_id' => $birthRecord->id,
                     'marriage_date' => $request->marriage_date,
@@ -535,7 +533,6 @@ class BirthRecordController extends Controller
                 ]);
             }
 
-            // Update attendant
             if ($birthRecord->attendant) {
                 $birthRecord->attendant->update([
                     'attendant_type' => $request->attendant_type,
@@ -547,7 +544,6 @@ class BirthRecordController extends Controller
                 ]);
             }
 
-            // Update informant
             if ($birthRecord->informant) {
                 $birthRecord->informant->update([
                     'first_name' => $request->informant_first_name,
@@ -561,13 +557,24 @@ class BirthRecordController extends Controller
 
             DB::commit();
 
-            // Reload relationships
-            $birthRecord->load(['mother', 'father', 'parentsMarriage', 'attendant', 'informant']);
+            // Reload relationships - USE THE CORRECT RELATIONSHIP NAMES
+            $birthRecord->load([
+                'mother',
+                'father',
+                'parentsMarriage',
+                'attendant',
+                'informant',
+                'encodedByStaff',  // Use encodedByStaff instead of encodedBy
+                'encodedByAdmin'   // Use encodedByAdmin
+            ]);
+
+
+            $transformedRecord = $this->transformBirthRecord($birthRecord);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Birth record updated successfully!',
-                'data' => $birthRecord
+                'data' => $transformedRecord  // Return the transformed record with encoder info
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -578,32 +585,24 @@ class BirthRecordController extends Controller
         }
     }
 
-    // Generate unique registry number
-    private function generateRegistryNumber()
-    {
-        $year = date('Y');
-
-        $lastRecord = BirthRecord::whereYear('created_at', $year)
-            ->orderBy('id', 'desc')
-            ->first();
-
-        $sequence = $lastRecord ?
-            (int) substr($lastRecord->registry_number, -5) + 1 : 1;
-
-        return "BR-{$year}-" . str_pad($sequence, 5, '0', STR_PAD_LEFT);
-    }
-
-    // Get single birth record
     public function show($id)
     {
         try {
-            $record = BirthRecord::with(['mother', 'father', 'parentsMarriage', 'attendant', 'informant', 'encodedBy'])
-                ->active()
-                ->findOrFail($id);
+            $record = BirthRecord::with([
+                'mother',
+                'father',
+                'parentsMarriage',
+                'attendant',
+                'informant',
+                'encodedByStaff',
+                'encodedByAdmin'
+            ])->active()->findOrFail($id);
+
+            $transformedRecord = $this->transformBirthRecord($record);
 
             return response()->json([
                 'success' => true,
-                'data' => $record,
+                'data' => $transformedRecord,
                 'message' => 'Birth record retrieved successfully'
             ]);
         } catch (\Exception $e) {
@@ -614,8 +613,6 @@ class BirthRecordController extends Controller
         }
     }
 
-
-    // Soft delete birth record
     public function destroy($id)
     {
         try {
@@ -630,6 +627,142 @@ class BirthRecordController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to delete birth record'
+            ], 500);
+        }
+    }
+
+    private function generateRegistryNumber()
+    {
+        $year = date('Y');
+
+        $lastRecord = BirthRecord::whereYear('created_at', $year)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $sequence = $lastRecord ?
+            (int) substr($lastRecord->registry_number, -5) + 1 : 1;
+
+        return "BR-{$year}-" . str_pad($sequence, 5, '0', STR_PAD_LEFT);
+    }
+
+    private function transformBirthRecord($record)
+    {
+        $encoderInfo = $this->getEncoderInfo($record);
+
+        return [
+            'id' => $record->id,
+            'registry_number' => $record->registry_number,
+            'child_first_name' => $record->child_first_name,
+            'child_middle_name' => $record->child_middle_name,
+            'child_last_name' => $record->child_last_name,
+            'sex' => $record->sex,
+            'date_of_birth' => $record->date_of_birth,
+            'time_of_birth' => $record->time_of_birth,
+            'place_of_birth' => $record->place_of_birth,
+            'birth_address_house' => $record->birth_address_house,
+            'birth_address_barangay' => $record->birth_address_barangay,
+            'birth_address_city' => $record->birth_address_city,
+            'birth_address_province' => $record->birth_address_province,
+            'type_of_birth' => $record->type_of_birth,
+            'multiple_birth_order' => $record->multiple_birth_order,
+            'birth_order' => $record->birth_order,
+            'birth_weight' => $record->birth_weight,
+            'birth_notes' => $record->birth_notes,
+            'date_registered' => $record->date_registered,
+            'is_active' => $record->is_active,
+            'created_at' => $record->created_at,
+            'updated_at' => $record->updated_at,
+
+            'mother' => $record->mother,
+            'father' => $record->father,
+            'parents_marriage' => $record->parentsMarriage,
+            'attendant' => $record->attendant,
+            'informant' => $record->informant,
+
+            'encoded_by' => $encoderInfo,
+            'encoder_name' => $record->encoder_name,
+            'encoder_type' => $record->encoder_type,
+
+            'full_name' => $record->full_name,
+            'birth_address' => $record->birth_address,
+            'formatted_date_of_birth' => $record->formatted_date_of_birth,
+            'formatted_time_of_birth' => $record->formatted_time_of_birth,
+        ];
+    }
+
+    /**
+     * Get encoder information based on user type - FIXED
+     */
+    private function getEncoderInfo($record)
+    {
+        // Default system info
+        $encoderInfo = [
+            'id' => null,
+            'full_name' => 'System',
+            'user_type' => 'System',
+            'email' => null,
+            'position' => 'System Account'
+        ];
+
+        // FIX: Check Admin relationship FIRST
+        if ($record->relationLoaded('encodedByAdmin') && $record->encodedByAdmin) {
+            $encoderInfo = [
+                'id' => $record->encodedByAdmin->id,
+                'full_name' => $record->encodedByAdmin->full_name,
+                'user_type' => 'Admin',
+                'email' => $record->encodedByAdmin->email,
+                'position' => $record->encodedByAdmin->position ?? 'System Administrator'
+            ];
+        }
+        // Then check Staff relationship
+        elseif ($record->relationLoaded('encodedBy') && $record->encodedBy) {
+            $encoderInfo = [
+                'id' => $record->encodedBy->id,
+                'full_name' => $record->encodedBy->full_name,
+                'user_type' => 'Staff',
+                'email' => $record->encodedBy->email,
+                'position' => 'Registry Staff'
+            ];
+        }
+        // Fallback to accessor methods
+        elseif ($record->encoder_name && $record->encoder_name !== 'System') {
+            $encoderInfo = [
+                'id' => $record->encoded_by,
+                'full_name' => $record->encoder_name,
+                'user_type' => $record->encoder_type,
+                'email' => null,
+                'position' => $record->encoder_type === 'Admin' ? 'System Administrator' : 'Registry Staff'
+            ];
+        }
+
+        return $encoderInfo;
+    }
+
+    // Add this method to your BirthRecordController
+    public function statistics()
+    {
+        try {
+            $totalRecords = BirthRecord::active()->count();
+            $maleCount = BirthRecord::active()->where('sex', 'Male')->count();
+            $femaleCount = BirthRecord::active()->where('sex', 'Female')->count();
+            $thisMonth = BirthRecord::active()
+                ->whereYear('created_at', date('Y'))
+                ->whereMonth('created_at', date('m'))
+                ->count();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_records' => $totalRecords,
+                    'male_count' => $maleCount,
+                    'female_count' => $femaleCount,
+                    'this_month' => $thisMonth,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch statistics'
             ], 500);
         }
     }

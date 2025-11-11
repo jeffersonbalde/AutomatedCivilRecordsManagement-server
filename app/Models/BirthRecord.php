@@ -1,12 +1,10 @@
 <?php
-// app/Models/BirthRecord.php - UPDATED
+// app/Models/BirthRecord.php
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Auth;
 
 class BirthRecord extends Model
 {
@@ -43,41 +41,125 @@ class BirthRecord extends Model
     ];
 
     // Relationships
-    public function mother(): HasOne
+    public function mother()
     {
         return $this->hasOne(ParentsInformation::class, 'birth_record_id')
                     ->where('parent_type', 'Mother');
     }
 
-    public function father(): HasOne
+    public function father()
     {
         return $this->hasOne(ParentsInformation::class, 'birth_record_id')
                     ->where('parent_type', 'Father');
     }
 
-    public function parents(): HasMany
+    public function parents()
     {
         return $this->hasMany(ParentsInformation::class, 'birth_record_id');
     }
 
-    public function parentsMarriage(): HasOne
+    public function parentsMarriage()
     {
         return $this->hasOne(ParentsMarriage::class, 'birth_record_id');
     }
 
-    public function attendant(): HasOne
+    public function attendant()
     {
         return $this->hasOne(BirthAttendant::class, 'birth_record_id');
     }
 
-    public function informant(): HasOne
+    public function informant()
     {
         return $this->hasOne(Informant::class, 'birth_record_id');
     }
 
-    public function encodedBy(): BelongsTo
+    /**
+     * Relationship: Staff who encoded this record
+     */
+    public function encodedByStaff()
     {
         return $this->belongsTo(Staff::class, 'encoded_by');
+    }
+
+    /**
+     * Relationship: Admin who encoded this record
+     */
+    public function encodedByAdmin()
+    {
+        return $this->belongsTo(Admin::class, 'encoded_by');
+    }
+
+    /**
+     * Accessor to get the encoder's full name regardless of type
+     */
+    public function getEncoderNameAttribute(): string
+    {
+        // First try to get from Staff relationship
+        if ($this->relationLoaded('encodedByStaff') && $this->encodedByStaff) {
+            return $this->encodedByStaff->full_name ?? 'Unknown Staff';
+        }
+
+        // Then try to get from Admin relationship
+        if ($this->relationLoaded('encodedByAdmin') && $this->encodedByAdmin) {
+            return $this->encodedByAdmin->full_name ?? 'Unknown Admin';
+        }
+
+        // If relationships are not loaded, try to lazy load
+        if ($this->encodedByStaff) {
+            return $this->encodedByStaff->full_name ?? 'Unknown Staff';
+        }
+
+        if ($this->encodedByAdmin) {
+            return $this->encodedByAdmin->full_name ?? 'Unknown Admin';
+        }
+
+        return 'System';
+    }
+
+    /**
+     * Accessor to get encoder type
+     */
+    public function getEncoderTypeAttribute(): string
+    {
+        if ($this->encodedByStaff) {
+            return 'Staff';
+        }
+
+        if ($this->encodedByAdmin) {
+            return 'Admin';
+        }
+
+        return 'System';
+    }
+
+    /**
+     * Accessor to get encoder email
+     */
+    public function getEncoderEmailAttribute(): ?string
+    {
+        if ($this->encodedByStaff) {
+            return $this->encodedByStaff->email ?? null;
+        }
+
+        if ($this->encodedByAdmin) {
+            return $this->encodedByAdmin->email ?? null;
+        }
+
+        return null;
+    }
+
+    /**
+     * Accessor to get encoder position/details
+     */
+    public function getEncoderDetailsAttribute(): string
+    {
+        if ($this->encodedByAdmin) {
+            return $this->encodedByAdmin->position ?? 'System Administrator';
+        } elseif ($this->encodedByStaff) {
+            return 'Registry Staff';
+        }
+
+        return 'System Account';
     }
 
     // Scopes

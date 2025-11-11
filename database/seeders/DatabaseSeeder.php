@@ -18,7 +18,9 @@ class DatabaseSeeder extends Seeder
         $this->call([
             AdminSeeder::class,
             StaffSeeder::class,
-            BirthRecordsSeeder::class, // Add this line
+            BirthRecordsSeeder::class,
+            MarriageRecordSeeder::class,
+            DeathRecordSeeder::class,
         ]);
     }
 }

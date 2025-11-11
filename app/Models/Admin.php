@@ -63,4 +63,12 @@ class Admin extends Authenticatable
     {
         return $this->full_name ?: $this->username;
     }
+
+        /**
+     * Relationship: Admin can encode many birth records
+     */
+    public function encodedBirthRecords()
+    {
+        return $this->hasMany(BirthRecord::class, 'encoded_by');
+    }
 }

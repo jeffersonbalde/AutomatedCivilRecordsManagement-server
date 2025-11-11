@@ -81,4 +81,5 @@ class Staff extends Authenticatable
     {
         return $this->full_name ?: $this->email;
     }
+
 }

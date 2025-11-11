@@ -2,6 +2,8 @@
 // routes/api.php
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BirthRecordController;
+use App\Http\Controllers\DeathRecordController;
+use App\Http\Controllers\MarriageRecordController;
 use App\Http\Controllers\StaffController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -22,6 +24,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/profile/update', [AuthController::class, 'updateProfile']);
     Route::put('/change-password', [AuthController::class, 'changePassword']);
 
+    Route::get('/birth-records/statistics', [BirthRecordController::class, 'statistics']);
+
     // Admin only routes
     Route::prefix('admin')->group(function () {
         // Staff management
@@ -41,7 +45,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/staff-test', [StaffController::class, 'testCreate']);
     });
 
-        // Birth Records Routes
+    // Birth Records Routes
     Route::prefix('birth-records')->group(function () {
         Route::get('/', [BirthRecordController::class, 'index']);
         Route::post('/check-duplicate', [BirthRecordController::class, 'checkDuplicate']);
@@ -49,6 +53,29 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{id}', [BirthRecordController::class, 'show']);
         Route::put('/{id}', [BirthRecordController::class, 'update']);
         Route::delete('/{id}', [BirthRecordController::class, 'destroy']);
+    });
+
+    // Marriage Records Routes
+    Route::prefix('marriage-records')->group(function () {
+        Route::get('/', [MarriageRecordController::class, 'index']);
+        Route::post('/check-duplicate', [MarriageRecordController::class, 'checkDuplicate']);
+        Route::post('/', [MarriageRecordController::class, 'store']);
+        Route::get('/{id}', [MarriageRecordController::class, 'show']);
+        Route::put('/{id}', [MarriageRecordController::class, 'update']);
+        Route::delete('/{id}', [MarriageRecordController::class, 'destroy']);
+        Route::get('/statistics/overview', [MarriageRecordController::class, 'statistics']);
+    });
+
+
+    // Death Records Routes
+    Route::prefix('death-records')->group(function () {
+        Route::get('/', [DeathRecordController::class, 'index']);
+        Route::post('/check-duplicate', [DeathRecordController::class, 'checkDuplicate']);
+        Route::post('/', [DeathRecordController::class, 'store']);
+        Route::get('/statistics', [DeathRecordController::class, 'statistics']);
+        Route::get('/{id}', [DeathRecordController::class, 'show']);
+        Route::put('/{id}', [DeathRecordController::class, 'update']);
+        Route::delete('/{id}', [DeathRecordController::class, 'destroy']);
     });
 });
 
