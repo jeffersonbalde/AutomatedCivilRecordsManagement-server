@@ -1,9 +1,11 @@
 <?php
 // routes/api.php
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BackupController;
 use App\Http\Controllers\BirthRecordController;
 use App\Http\Controllers\DeathRecordController;
 use App\Http\Controllers\MarriageRecordController;
+use App\Http\Controllers\ReportController;
 use App\Http\Controllers\StaffController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -77,6 +79,23 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/{id}', [DeathRecordController::class, 'update']);
         Route::delete('/{id}', [DeathRecordController::class, 'destroy']);
     });
+
+
+
+    // Reports endpoints
+    Route::get('/reports/statistics', [ReportController::class, 'getStatistics']);
+    Route::get('/reports/registrations-trend', [ReportController::class, 'getRegistrationsTrend']);
+    Route::get('/reports/gender-distribution', [ReportController::class, 'getGenderDistribution']);
+    Route::get('/reports/monthly-summary', [ReportController::class, 'getMonthlySummary']);
+    Route::get('/reports/record-type-distribution', [ReportController::class, 'getRecordTypeDistribution']);
+    Route::get('/reports/export-data', [ReportController::class, 'exportData']);
+
+
+    // Backup routes
+    Route::get('/backup/info', [BackupController::class, 'getBackupInfo']);
+    Route::post('/backup/create', [BackupController::class, 'createBackup']);
+    Route::get('/backup/download/{filename}', [BackupController::class, 'downloadBackup']);
+    Route::delete('/backup/delete/{filename}', [BackupController::class, 'deleteBackup']);
 });
 
 // FIXED API Route - Remove mimeType() call
