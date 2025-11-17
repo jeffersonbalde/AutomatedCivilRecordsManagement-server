@@ -2,6 +2,7 @@
 // app/Http/Controllers/ReportController.php - UPDATED VERSION
 namespace App\Http\Controllers;
 
+use App\Models\CertificateIssuanceLog;
 use Illuminate\Http\Request;
 use App\Models\BirthRecord;
 use App\Models\MarriageRecord;
@@ -56,6 +57,61 @@ class ReportController extends Controller
             ], 500);
         }
     }
+
+
+    // In ReportController.php - Add this new method
+public function getDashboardStatistics()
+{
+    try {
+        // Get record counts from existing statistics
+        $basicStats = $this->getStatistics()->getData();
+        
+        // Get certificate issuance stats
+        $totalCertificates = CertificateIssuanceLog::count();
+        $todayCertificates = CertificateIssuanceLog::whereDate('created_at', today())->count();
+        
+        // Calculate monthly revenue
+        $monthlyRevenue = CertificateIssuanceLog::whereMonth('created_at', now()->month)
+            ->whereYear('created_at', now()->year)
+            ->sum('amount_paid');
+        
+        // Get recent issuances
+        $recentIssuances = CertificateIssuanceLog::with(['issuer'])
+            ->orderBy('created_at', 'desc')
+            ->take(5)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                // Record counts from existing method
+                'totalBirthRecords' => $basicStats->data->total_births ?? 0,
+                'totalMarriageRecords' => $basicStats->data->total_marriages ?? 0,
+                'totalDeathRecords' => $basicStats->data->total_deaths ?? 0,
+                
+                // Certificate statistics
+                'totalCertificatesIssued' => $totalCertificates,
+                'todayCertificates' => $todayCertificates,
+                'monthlyRevenue' => $monthlyRevenue,
+                
+                // Recent activity
+                'recentIssuances' => $recentIssuances,
+                
+                // Additional stats for dashboard
+                'totalRecords' => $basicStats->data->total_records ?? 0,
+                'monthlyBirths' => $basicStats->data->monthly_births ?? 0,
+                'monthlyMarriages' => $basicStats->data->monthly_marriages ?? 0,
+                'monthlyDeaths' => $basicStats->data->monthly_deaths ?? 0,
+            ]
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Error fetching dashboard statistics: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch dashboard statistics'
+        ], 500);
+    }
+}
 
 // app/Http/Controllers/ReportController.php - FIXED getRegistrationsTrend method
 public function getRegistrationsTrend(Request $request)

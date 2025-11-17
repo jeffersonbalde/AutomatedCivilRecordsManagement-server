@@ -3,7 +3,9 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BackupController;
 use App\Http\Controllers\BirthRecordController;
+use App\Http\Controllers\CertificateIssuanceController;
 use App\Http\Controllers\DeathRecordController;
+use App\Http\Controllers\DocumentScanningController;
 use App\Http\Controllers\MarriageRecordController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\StaffController;
@@ -96,6 +98,36 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/backup/create', [BackupController::class, 'createBackup']);
     Route::get('/backup/download/{filename}', [BackupController::class, 'downloadBackup']);
     Route::delete('/backup/delete/{filename}', [BackupController::class, 'deleteBackup']);
+
+    // Certificate issuance
+    Route::post('/certificate-issuance', [CertificateIssuanceController::class, 'store']);
+    Route::get('/certificate-issuance', [CertificateIssuanceController::class, 'index']);
+    Route::get('/certificate-issuance/statistics', [CertificateIssuanceController::class, 'statistics']);
+
+    // Enhanced search endpoints
+    Route::get('/birth-records/search', [BirthRecordController::class, 'search']);
+    Route::get('/marriage-records/search', [MarriageRecordController::class, 'search']);
+    Route::get('/death-records/search', [DeathRecordController::class, 'search']);
+
+    // Individual record endpoints (for certificate generation)
+    Route::get('/birth-records/{id}', [BirthRecordController::class, 'show']);
+    Route::get('/marriage-records/{id}', [MarriageRecordController::class, 'show']);
+    Route::get('/death-records/{id}', [DeathRecordController::class, 'show']);
+
+
+    // In routes/api.php
+    Route::get('/dashboard/statistics', [ReportController::class, 'getDashboardStatistics']);
+
+    // In your routes/api.php, inside the auth middleware group
+
+    // Document Scanning Routes
+    Route::post('/document-scanning/upload', [DocumentScanningController::class, 'uploadDocument']);
+    Route::get('/document-scanning/search', [DocumentScanningController::class, 'searchDocuments']);
+    Route::get('/document-scanning/documents', [DocumentScanningController::class, 'getAllDocuments']);
+    Route::get('/document-scanning/document/{id}', [DocumentScanningController::class, 'getDocument']);
+    Route::get('/document-scanning/file/{id}', [DocumentScanningController::class, 'serveFile']);
+    // ADD THIS DELETE ROUTE:
+    Route::delete('/document-scanning/documents/{id}', [DocumentScanningController::class, 'destroy']);;
 });
 
 // FIXED API Route - Remove mimeType() call
@@ -121,3 +153,25 @@ Route::get('/avatar/{filename}', function ($filename) {
         ->header('Access-Control-Allow-Origin', '*')
         ->header('Cross-Origin-Resource-Policy', 'cross-origin');
 });
+
+
+// Add this to your routes/api.php temporarily
+Route::get('/check-file/{filename}', function ($filename) {
+    $path = "documents/marriage/{$filename}";
+
+    $exists = Storage::disk('public')->exists($path);
+    $fullPath = storage_path('app/public/' . $path);
+
+    return response()->json([
+        'filename' => $filename,
+        'path' => $path,
+        'exists' => $exists,
+        'full_path' => $fullPath,
+        'file_exists_php' => file_exists($fullPath),
+        'is_readable' => is_readable($fullPath),
+        'filesize' => $exists ? Storage::disk('public')->size($path) : 0,
+    ]);
+});
+
+// Add this to your existing document-scanning routes
+Route::get('/document-scanning/file/{id}', [DocumentScanningController::class, 'serveFile']);
