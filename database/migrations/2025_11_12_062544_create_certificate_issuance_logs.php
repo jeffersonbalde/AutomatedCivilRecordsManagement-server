@@ -23,7 +23,6 @@ return new class extends Migration
                 $table->string('or_number');
                 $table->date('date_paid');
                 $table->string('purpose')->nullable();
-                $table->unsignedBigInteger('issued_by');
                 $table->enum('issued_by_type', ['admin', 'staff']);
                 $table->timestamps();
 
@@ -32,7 +31,6 @@ return new class extends Migration
                 $table->index('certificate_number');
                 $table->index('or_number');
                 $table->index('date_paid');
-                $table->index('issued_by');
             });
         }
     }
