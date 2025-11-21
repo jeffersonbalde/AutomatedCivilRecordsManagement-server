@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('birth_records', function (Blueprint $table) {
             $table->id();
             $table->string('registry_number')->unique();
-            
+
             // Child Information
             $table->string('child_first_name');
             $table->string('child_middle_name')->nullable();
@@ -29,13 +29,13 @@ return new class extends Migration
             $table->integer('birth_order');
             $table->decimal('birth_weight', 5, 2)->nullable();
             $table->text('birth_notes')->nullable();
-            
+
             // System Fields
             $table->date('date_registered');
-            $table->foreignId('encoded_by')->constrained('staff');
+            $table->foreignId('encoded_by')->nullable()->constrained('staff')->onDelete('set null');
             $table->boolean('is_active')->default(true);
             $table->timestamps();
-            
+
             // Indexes for search performance
             $table->index(['child_first_name', 'child_last_name']);
             $table->index('date_of_birth');

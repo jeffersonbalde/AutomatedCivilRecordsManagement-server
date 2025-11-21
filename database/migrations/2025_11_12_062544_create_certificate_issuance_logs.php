@@ -23,6 +23,7 @@ return new class extends Migration
                 $table->string('or_number');
                 $table->date('date_paid');
                 $table->string('purpose')->nullable();
+                $table->unsignedBigInteger('issued_by'); // Add this line
                 $table->enum('issued_by_type', ['admin', 'staff']);
                 $table->timestamps();
 

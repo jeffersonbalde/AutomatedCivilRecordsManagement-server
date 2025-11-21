@@ -83,7 +83,7 @@ class MarriageRecordSeeder extends Seeder
                 // Ceremony Details
                 'officiating_officer' => 'Hon. Jose Reyes',
                 'officiant_title' => 'Mayor',
-                'officiant_license' => 'MAR-REG-001',
+                'officiant_license' => 'MAR-REG-001', // Fixed value
 
                 // Legal Basis
                 'legal_basis' => 'Family Code of the Philippines',
@@ -168,7 +168,7 @@ class MarriageRecordSeeder extends Seeder
                 // Ceremony Details
                 'officiating_officer' => 'Fr. John Smith',
                 'officiant_title' => 'Priest',
-                'officiant_license' => 'CHR-REG-001',
+                'officiant_license' => 'CHR-REG-001', // Fixed value
 
                 // Legal Basis
                 'legal_basis' => 'Family Code of the Philippines',
@@ -284,7 +284,7 @@ class MarriageRecordSeeder extends Seeder
                 // Ceremony Details
                 'officiating_officer' => (rand(0, 1) ? 'Hon. ' : 'Fr. ') . $firstNamesMale[array_rand($firstNamesMale)] . ' ' . $lastNames[array_rand($lastNames)],
                 'officiant_title' => rand(0, 1) ? 'Mayor' : 'Priest',
-                'officiant_license' => 'LIC-' . strtoupper(substr($city, 0, 3)) . '-' . rand(1000, 9999),
+                'officiant_license' => 'LIC-' . strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $city), 0, 3)) . '-' . rand(1000, 9999), // Fixed: remove non-alphabetic characters
 
                 // Witnesses
                 'witness1_name' => $firstNamesMale[array_rand($firstNamesMale)] . ' ' . $lastNames[array_rand($lastNames)],

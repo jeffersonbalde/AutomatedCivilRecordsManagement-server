@@ -94,7 +94,7 @@ return new class extends Migration
 
             // System Fields
             $table->date('date_registered');
-            $table->foreignId('encoded_by')->constrained('staff');
+            $table->foreignId('encoded_by')->nullable()->constrained('staff')->onDelete('set null');
             $table->boolean('is_active')->default(true);
             $table->timestamps();
 
