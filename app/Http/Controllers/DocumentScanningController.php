@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use App\Models\DocumentRecord;
 use App\Models\Admin;
 use App\Models\Staff;
+use Smalot\PdfParser\Parser as PdfParser;
 
 class DocumentScanningController extends Controller
 {
@@ -22,7 +23,7 @@ class DocumentScanningController extends Controller
             $validator = Validator::make($request->all(), [
                 'document' => 'required|file|mimes:jpeg,png,jpg,pdf|max:10240',
                 'record_type' => 'required|in:birth,marriage,death',
-                'original_filename' => 'required|string'
+                'original_filename' => ['required', 'string', 'max:255']
             ]);
 
             if ($validator->fails()) {
@@ -36,20 +37,40 @@ class DocumentScanningController extends Controller
             $recordType = $request->record_type;
             $originalFilename = $request->original_filename;
 
+            // Phase 1: Document naming convention - filename must include record type and details
+            if (!$this->isValidDocumentFilename($originalFilename, $recordType)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Filename must follow the naming convention: {record_type}_{identifier}_{date}.{ext}. Example: birth_MR-001_2025-02-05.pdf or marriage_JohnDoe-Maria_2025-02-05.pdf'
+                ], 422);
+            }
+
+            // Phase 1: Duplicate filename detection - same filename + record type already exists
+            $duplicateExists = DocumentRecord::where('record_type', $recordType)
+                ->where('original_filename', $originalFilename)
+                ->where('is_active', true)
+                ->exists();
+            if ($duplicateExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'A document with this filename already exists for this record type. Please use a different filename or delete the existing document first.'
+                ], 422);
+            }
+
             // Determine who is uploading (admin or staff)
-            $uploaderId = auth()->id();
+            $uploaderId = \Illuminate\Support\Facades\Auth::id();
             $uploaderType = null;
             $uploaderName = 'System';
 
             // Check if current user is an admin
-            if (auth()->guard('admin')->check()) {
+            if (\Illuminate\Support\Facades\Auth::guard('admin')->check()) {
                 $uploaderType = 'App\\Models\\Admin';
                 $uploader = Admin::find($uploaderId);
                 $uploaderName = $uploader->full_name ?? $uploader->username ?? 'Admin';
                 Log::info('Uploader is admin', ['id' => $uploaderId, 'name' => $uploaderName]);
             }
             // Check if current user is staff
-            elseif (auth()->guard('staff')->check()) {
+            elseif (\Illuminate\Support\Facades\Auth::guard('staff')->check()) {
                 $uploaderType = 'App\\Models\\Staff';
                 $uploader = Staff::find($uploaderId);
                 $uploaderName = $uploader->full_name ?? $uploader->email ?? 'Staff';
@@ -98,8 +119,9 @@ class DocumentScanningController extends Controller
                 throw new \Exception('Failed to store file');
             }
 
-            // Extract basic text for search
-            $extractedText = $this->extractSearchableText($originalFilename, $recordType);
+            // Extract text for search (PDF full-text via smalot/pdfparser)
+            $fullPath = Storage::disk('public')->path($filePath);
+            $extractedText = $this->extractSearchableText($originalFilename, $recordType, $file->getMimeType(), $fullPath);
 
             // Save to database
             $documentRecord = DocumentRecord::create([
@@ -144,10 +166,77 @@ class DocumentScanningController extends Controller
         }
     }
 
-    private function extractSearchableText($filename, $recordType)
+    /**
+     * Phase 1: Check if a document with the same filename already exists (duplicate detection).
+     */
+    public function checkFilename(Request $request)
+    {
+        $recordType = $request->input('record_type');
+        $originalFilename = $request->input('original_filename');
+        if (!$recordType || !$originalFilename) {
+            return response()->json([
+                'success' => true,
+                'data' => ['exists' => false],
+            ]);
+        }
+        $exists = DocumentRecord::where('record_type', $recordType)
+            ->where('original_filename', $originalFilename)
+            ->where('is_active', true)
+            ->exists();
+        return response()->json([
+            'success' => true,
+            'data' => ['exists' => $exists],
+        ]);
+    }
+
+    /**
+     * Phase 1: Validate document filename convention.
+     * Format: {record_type}_{identifier}[_{YYYY-MM-DD}].{pdf|jpg|jpeg|png}
+     * Example: birth_MR-001_2025-02-05.pdf, marriage_JohnDoe-Maria.pdf
+     */
+    private function isValidDocumentFilename(string $filename, string $recordType): bool
+    {
+        $filename = trim($filename);
+        if ($filename === '') {
+            return false;
+        }
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['pdf', 'jpg', 'jpeg', 'png'], true)) {
+            return false;
+        }
+        $base = pathinfo($filename, PATHINFO_FILENAME);
+        if (!preg_match('/^' . preg_quote($recordType, '/') . '_[A-Za-z0-9\-_\s]+(_\d{4}-\d{2}-\d{2})?$/', $base)) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Phase 2: Extract searchable text - filename + recordType; for PDFs also extract content for full-text search.
+     */
+    private function extractSearchableText(string $filename, string $recordType, ?string $mimeType = null, ?string $fullPath = null): string
     {
         $cleanName = pathinfo($filename, PATHINFO_FILENAME);
         $searchableText = strtolower($cleanName . ' ' . $recordType);
+
+        if ($mimeType === 'application/pdf' && $fullPath && is_readable($fullPath)) {
+            try {
+                $parser = new PdfParser();
+                $pdf = $parser->parseFile($fullPath);
+                $text = $pdf->getText();
+                if ($text !== '') {
+                    $text = preg_replace('/\s+/', ' ', trim($text));
+                    $maxLen = 60000; // Leave room for DB text column
+                    if (mb_strlen($text) > $maxLen) {
+                        $text = mb_substr($text, 0, $maxLen);
+                    }
+                    $searchableText .= ' ' . strtolower($text);
+                }
+            } catch (\Throwable $e) {
+                Log::warning('PDF text extraction failed: ' . $e->getMessage());
+            }
+        }
+
         return $searchableText;
     }
 
@@ -211,11 +300,22 @@ class DocumentScanningController extends Controller
             $query = $request->input('query', '');
             $recordType = $request->input('record_type', 'all');
 
+            // Phase 2: Support search by unique key (e.g. birth-5, marriage-12)
+            $byUniqueKey = false;
+            $uniqueKeyId = null;
+            if (!empty(trim($query)) && preg_match('/^(birth|marriage|death)-(\d+)$/i', trim($query), $m)) {
+                $byUniqueKey = true;
+                $uniqueKeyId = (int) $m[2];
+            }
+
             $documentsQuery = DocumentRecord::where('is_active', true)
                 ->when($recordType !== 'all', function ($q) use ($recordType) {
                     return $q->where('record_type', $recordType);
                 })
-                ->when(!empty(trim($query)), function ($q) use ($query) {
+                ->when(!empty(trim($query)), function ($q) use ($query, $byUniqueKey, $uniqueKeyId) {
+                    if ($byUniqueKey && $uniqueKeyId) {
+                        return $q->where('id', $uniqueKeyId);
+                    }
                     return $q->where(function ($q) use ($query) {
                         $q->where('original_filename', 'LIKE', "%{$query}%")
                             ->orWhere('extracted_text', 'LIKE', "%{$query}%")
@@ -224,18 +324,31 @@ class DocumentScanningController extends Controller
                 })
                 ->orderBy('created_at', 'desc');
 
-            $results = $documentsQuery->get()->map(function ($document) {
-                return [
+            $queryTrimmed = trim($query);
+            $results = $documentsQuery->get()->map(function ($document) use ($queryTrimmed) {
+                $item = [
                     'id' => $document->id,
+                    'unique_key' => $document->record_type . '-' . $document->id,
                     'record_type' => $document->record_type,
                     'original_filename' => $document->original_filename,
                     'file_url' => url("/api/document-scanning/file/{$document->id}"),
-                    'file_size' => $this->formatFileSize($document->file_size),
+                    'file_size' => $document->file_size,
+                    'file_size_formatted' => $this->formatFileSize($document->file_size),
                     'uploaded_at' => $document->created_at->format('M d, Y H:i'),
                     'uploaded_by' => $document->uploader_name,
                     'is_image' => strpos($document->mime_type, 'image') !== false,
-                    'is_pdf' => $document->mime_type === 'application/pdf'
+                    'is_pdf' => $document->mime_type === 'application/pdf',
+                    'created_at' => $document->created_at,
+                    'updated_at' => $document->updated_at
                 ];
+                // UX: show excerpt from PDF text where the search term appears
+                if ($queryTrimmed !== '' && !empty($document->extracted_text)) {
+                    $snippet = $this->buildMatchSnippet($document->extracted_text, $queryTrimmed, 100);
+                    if ($snippet !== null) {
+                        $item['match_snippet'] = $snippet;
+                    }
+                }
+                return $item;
             });
 
             return response()->json([
@@ -266,6 +379,7 @@ class DocumentScanningController extends Controller
                 'success' => true,
                 'data' => [
                     'id' => $document->id,
+                    'unique_key' => $document->record_type . '-' . $document->id,
                     'record_type' => $document->record_type,
                     'original_filename' => $document->original_filename,
                     'file_url' => url("/api/document-scanning/file/{$document->id}"),
@@ -294,11 +408,12 @@ class DocumentScanningController extends Controller
                 ->map(function ($document) {
                     return [
                         'id' => $document->id,
+                        'unique_key' => $document->record_type . '-' . $document->id,
                         'record_type' => $document->record_type,
                         'original_filename' => $document->original_filename,
                         'file_url' => url("/api/document-scanning/file/{$document->id}"),
-                        'file_size' => $document->file_size, // Send raw bytes, not formatted
-                        'file_size_formatted' => $this->formatFileSize($document->file_size), // Optional: send formatted version too
+                        'file_size' => $document->file_size,
+                        'file_size_formatted' => $this->formatFileSize($document->file_size),
                         'uploaded_at' => $document->created_at->format('M d, Y H:i'),
                         'uploaded_by' => $document->uploader_name,
                         'is_image' => strpos($document->mime_type, 'image') !== false,
@@ -331,7 +446,7 @@ class DocumentScanningController extends Controller
             }
 
             $file = Storage::disk('public')->get($document->file_path);
-            $mimeType = Storage::disk('public')->mimeType($document->file_path);
+            $mimeType = $document->mime_type ?? 'application/octet-stream';
 
             return response($file, 200)
                 ->header('Content-Type', $mimeType)
@@ -341,6 +456,33 @@ class DocumentScanningController extends Controller
             Log::error('File serve error: ' . $e->getMessage());
             abort(404, 'File not found');
         }
+    }
+
+    /**
+     * Build a short excerpt from extracted text containing the search query (for UX: show why the document matched).
+     */
+    private function buildMatchSnippet(string $text, string $query, int $contextChars = 100): ?string
+    {
+        $text = preg_replace('/\s+/', ' ', trim($text));
+        if ($text === '' || $query === '') {
+            return null;
+        }
+        $pos = mb_stripos($text, $query);
+        if ($pos === false) {
+            return null;
+        }
+        $qlen = mb_strlen($query);
+        $textLen = mb_strlen($text);
+        $start = max(0, $pos - $contextChars);
+        $end = min($textLen, $pos + $qlen + $contextChars);
+        $snippet = mb_substr($text, $start, $end - $start);
+        if ($start > 0) {
+            $snippet = '…' . $snippet;
+        }
+        if ($end < $textLen) {
+            $snippet .= '…';
+        }
+        return $snippet;
     }
 
     private function formatFileSize($bytes)

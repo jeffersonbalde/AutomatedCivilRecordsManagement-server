@@ -41,6 +41,11 @@ class BirthRecordController extends Controller
                 $query->where('date_of_birth', '<=', $request->date_to);
             }
 
+            // Phase 2: Place filter (not name only)
+            if ($request->filled('place_of_birth')) {
+                $query->where('place_of_birth', 'like', '%' . $request->place_of_birth . '%');
+            }
+
             $query->orderBy('created_at', 'desc');
 
             $perPage = $request->get('per_page', 1000);
@@ -78,7 +83,8 @@ class BirthRecordController extends Controller
                 'child_first_name' => 'required|string',
                 'child_last_name' => 'required|string',
                 'date_of_birth' => 'required|date',
-                'exclude_id' => 'nullable|integer', // ADD THIS
+                'place_of_birth' => 'nullable|string',
+                'exclude_id' => 'nullable|integer',
             ]);
 
             if ($validator->fails()) {
@@ -89,11 +95,14 @@ class BirthRecordController extends Controller
                 ], 422);
             }
 
-            // Exact duplicate check - with optional exclusion
+            // Phase 2: Exact duplicate = name + date + place of birth (not name only)
             $query = BirthRecord::where('child_first_name', $request->child_first_name)
                 ->where('child_last_name', $request->child_last_name)
                 ->where('date_of_birth', $request->date_of_birth)
                 ->active();
+            if ($request->filled('place_of_birth')) {
+                $query->where('place_of_birth', $request->place_of_birth);
+            }
 
             // Exclude specific ID if provided (for update operations)
             if ($request->has('exclude_id') && $request->exclude_id) {
@@ -128,7 +137,8 @@ class BirthRecordController extends Controller
                 'checked_fields' => [
                     'child_first_name' => $request->child_first_name,
                     'child_last_name' => $request->child_last_name,
-                    'date_of_birth' => $request->date_of_birth
+                    'date_of_birth' => $request->date_of_birth,
+                    'place_of_birth' => $request->place_of_birth,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -209,6 +219,15 @@ class BirthRecordController extends Controller
                 'informant_relationship' => 'required|string|max:255',
                 'informant_address' => 'required|string|max:255',
                 'informant_certification_accepted' => 'required|boolean',
+
+                // Phase 3: Late registration, legitimacy, name change
+                'is_late_registration' => 'nullable|boolean',
+                'legitimacy_status' => 'nullable|in:Legitimate,Illegitimate',
+                'father_acknowledgment' => 'nullable|string|max:1000',
+                'name_changed' => 'nullable|boolean',
+                'current_first_name' => 'required_if:name_changed,true|nullable|string|max:255',
+                'current_middle_name' => 'nullable|string|max:255',
+                'current_last_name' => 'required_if:name_changed,true|nullable|string|max:255',
             ]);
 
             $user = Auth::user();
@@ -222,16 +241,20 @@ class BirthRecordController extends Controller
                 ], 422);
             }
 
-            $duplicateCheck = BirthRecord::where('child_first_name', $request->child_first_name)
+            // Phase 2: Duplicate = name + date + place of birth (not name only)
+            $dupQuery = BirthRecord::where('child_first_name', $request->child_first_name)
                 ->where('child_last_name', $request->child_last_name)
                 ->where('date_of_birth', $request->date_of_birth)
-                ->active()
-                ->first();
+                ->active();
+            if ($request->filled('place_of_birth')) {
+                $dupQuery->where('place_of_birth', $request->place_of_birth);
+            }
+            $duplicateCheck = $dupQuery->first();
 
             if ($duplicateCheck) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Duplicate record found. A record with the same child name and date of birth already exists.',
+                    'message' => 'Duplicate record found. A record with the same child name, date of birth, and place of birth already exists.',
                     'is_duplicate' => true,
                     'existing_record' => $duplicateCheck
                 ], 409);
@@ -259,6 +282,13 @@ class BirthRecordController extends Controller
                 'birth_notes' => $request->birth_notes,
                 'date_registered' => now(),
                 'encoded_by' => $encodedBy,
+                'is_late_registration' => (bool) ($request->is_late_registration ?? false),
+                'legitimacy_status' => $request->legitimacy_status ?? 'Legitimate',
+                'father_acknowledgment' => $request->father_acknowledgment,
+                'name_changed' => (bool) ($request->name_changed ?? false),
+                'current_first_name' => $request->current_first_name,
+                'current_middle_name' => $request->current_middle_name,
+                'current_last_name' => $request->current_last_name,
             ]);
 
             ParentsInformation::create([
@@ -427,6 +457,15 @@ class BirthRecordController extends Controller
                 'informant_relationship' => 'required|string|max:255',
                 'informant_address' => 'required|string|max:255',
                 'informant_certification_accepted' => 'required|boolean',
+
+                // Phase 3
+                'is_late_registration' => 'nullable|boolean',
+                'legitimacy_status' => 'nullable|in:Legitimate,Illegitimate',
+                'father_acknowledgment' => 'nullable|string|max:1000',
+                'name_changed' => 'nullable|boolean',
+                'current_first_name' => 'required_if:name_changed,true|nullable|string|max:255',
+                'current_middle_name' => 'nullable|string|max:255',
+                'current_last_name' => 'required_if:name_changed,true|nullable|string|max:255',
             ]);
 
             if ($validator->fails()) {
@@ -439,18 +478,21 @@ class BirthRecordController extends Controller
 
             $birthRecord = BirthRecord::active()->findOrFail($id);
 
-            // FIXED: Check for duplicates (excluding current record) - PROPERLY exclude current record
-            $duplicateCheck = BirthRecord::where('child_first_name', $request->child_first_name)
+            // Phase 2: Duplicate = name + date + place of birth (excluding current record)
+            $dupQuery = BirthRecord::where('child_first_name', $request->child_first_name)
                 ->where('child_last_name', $request->child_last_name)
                 ->where('date_of_birth', $request->date_of_birth)
-                ->where('id', '!=', $id) // Exclude current record - THIS SHOULD WORK
-                ->active()
-                ->first();
+                ->where('id', '!=', $id)
+                ->active();
+            if ($request->filled('place_of_birth')) {
+                $dupQuery->where('place_of_birth', $request->place_of_birth);
+            }
+            $duplicateCheck = $dupQuery->first();
 
             if ($duplicateCheck) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Duplicate record found. Another record with the same child name and date of birth already exists.',
+                    'message' => 'Duplicate record found. Another record with the same child name, date of birth, and place of birth already exists.',
                     'is_duplicate' => true,
                     'existing_record' => $duplicateCheck
                 ], 409);
@@ -473,6 +515,13 @@ class BirthRecordController extends Controller
                 'birth_order' => $request->birth_order,
                 'birth_weight' => $request->birth_weight,
                 'birth_notes' => $request->birth_notes,
+                'is_late_registration' => (bool) ($request->is_late_registration ?? false),
+                'legitimacy_status' => $request->legitimacy_status ?? 'Legitimate',
+                'father_acknowledgment' => $request->father_acknowledgment,
+                'name_changed' => (bool) ($request->name_changed ?? false),
+                'current_first_name' => $request->current_first_name,
+                'current_middle_name' => $request->current_middle_name,
+                'current_last_name' => $request->current_last_name,
             ]);
 
             if ($birthRecord->mother) {
@@ -673,6 +722,14 @@ class BirthRecordController extends Controller
             'created_at' => $record->created_at,
             'updated_at' => $record->updated_at,
 
+            'is_late_registration' => (bool) ($record->is_late_registration ?? false),
+            'legitimacy_status' => $record->legitimacy_status ?? 'Legitimate',
+            'father_acknowledgment' => $record->father_acknowledgment,
+            'name_changed' => (bool) ($record->name_changed ?? false),
+            'current_first_name' => $record->current_first_name,
+            'current_middle_name' => $record->current_middle_name,
+            'current_last_name' => $record->current_last_name,
+
             'mother' => $record->mother,
             'father' => $record->father,
             'parents_marriage' => $record->parentsMarriage,
@@ -684,6 +741,7 @@ class BirthRecordController extends Controller
             'encoder_type' => $record->encoder_type,
 
             'full_name' => $record->full_name,
+            'display_name' => $record->display_name,
             'birth_address' => $record->birth_address,
             'formatted_date_of_birth' => $record->formatted_date_of_birth,
             'formatted_time_of_birth' => $record->formatted_time_of_birth,

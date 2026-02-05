@@ -32,6 +32,11 @@ class MarriageRecordController extends Controller
                 $query->where('date_of_marriage', '<=', $request->date_to);
             }
 
+            // Phase 2: Place filter (not name only)
+            if ($request->filled('place_of_marriage')) {
+                $query->where('place_of_marriage', 'like', '%' . $request->place_of_marriage . '%');
+            }
+
             $query->orderBy('created_at', 'desc');
 
             $perPage = $request->get('per_page', 1000);
@@ -71,6 +76,7 @@ class MarriageRecordController extends Controller
                 'wife_first_name' => 'required|string',
                 'wife_last_name' => 'required|string',
                 'date_of_marriage' => 'required|date',
+                'place_of_marriage' => 'nullable|string',
                 'exclude_id' => 'nullable|integer',
             ]);
 
@@ -82,13 +88,16 @@ class MarriageRecordController extends Controller
                 ], 422);
             }
 
-            // Exact duplicate check
+            // Phase 2: Exact duplicate = names + date + place of marriage (not name only)
             $query = MarriageRecord::where('husband_first_name', $request->husband_first_name)
                 ->where('husband_last_name', $request->husband_last_name)
                 ->where('wife_first_name', $request->wife_first_name)
                 ->where('wife_last_name', $request->wife_last_name)
                 ->where('date_of_marriage', $request->date_of_marriage)
                 ->active();
+            if ($request->filled('place_of_marriage')) {
+                $query->where('place_of_marriage', $request->place_of_marriage);
+            }
 
             if ($request->has('exclude_id') && $request->exclude_id) {
                 $query->where('id', '!=', $request->exclude_id);
@@ -122,7 +131,8 @@ class MarriageRecordController extends Controller
                     'husband_last_name' => $request->husband_last_name,
                     'wife_first_name' => $request->wife_first_name,
                     'wife_last_name' => $request->wife_last_name,
-                    'date_of_marriage' => $request->date_of_marriage
+                    'date_of_marriage' => $request->date_of_marriage,
+                    'place_of_marriage' => $request->place_of_marriage,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -231,19 +241,22 @@ class MarriageRecordController extends Controller
                 ], 422);
             }
 
-            // Check for duplicates
-            $duplicateCheck = MarriageRecord::where('husband_first_name', $request->husband_first_name)
+            // Phase 2: Duplicate = names + date + place of marriage (not name only)
+            $dupQuery = MarriageRecord::where('husband_first_name', $request->husband_first_name)
                 ->where('husband_last_name', $request->husband_last_name)
                 ->where('wife_first_name', $request->wife_first_name)
                 ->where('wife_last_name', $request->wife_last_name)
                 ->where('date_of_marriage', $request->date_of_marriage)
-                ->active()
-                ->first();
+                ->active();
+            if ($request->filled('place_of_marriage')) {
+                $dupQuery->where('place_of_marriage', $request->place_of_marriage);
+            }
+            $duplicateCheck = $dupQuery->first();
 
             if ($duplicateCheck) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Duplicate record found. A marriage record with the same couple and date already exists.',
+                    'message' => 'Duplicate record found. A marriage record with the same couple, date, and place already exists.',
                     'is_duplicate' => true,
                     'existing_record' => $duplicateCheck
                 ], 409);
@@ -462,20 +475,23 @@ class MarriageRecordController extends Controller
             // Find the existing record
             $marriageRecord = MarriageRecord::active()->findOrFail($id);
 
-            // Check for duplicates excluding current record
-            $duplicateCheck = MarriageRecord::where('husband_first_name', $request->husband_first_name)
+            // Phase 2: Duplicate = names + date + place of marriage (excluding current record)
+            $dupQuery = MarriageRecord::where('husband_first_name', $request->husband_first_name)
                 ->where('husband_last_name', $request->husband_last_name)
                 ->where('wife_first_name', $request->wife_first_name)
                 ->where('wife_last_name', $request->wife_last_name)
                 ->where('date_of_marriage', $request->date_of_marriage)
                 ->where('id', '!=', $id)
-                ->active()
-                ->first();
+                ->active();
+            if ($request->filled('place_of_marriage')) {
+                $dupQuery->where('place_of_marriage', $request->place_of_marriage);
+            }
+            $duplicateCheck = $dupQuery->first();
 
             if ($duplicateCheck) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Duplicate record found. Another record with the same couple and date already exists.',
+                    'message' => 'Duplicate record found. Another record with the same couple, date, and place already exists.',
                     'is_duplicate' => true,
                     'existing_record' => $duplicateCheck
                 ], 409);

@@ -95,6 +95,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Backup routes
     Route::get('/backup/info', [BackupController::class, 'getBackupInfo']);
+    Route::get('/backup/schedule', [BackupController::class, 'getSchedule']);
+    Route::put('/backup/schedule', [BackupController::class, 'saveSchedule']);
     Route::post('/backup/create', [BackupController::class, 'createBackup']);
     Route::get('/backup/download/{filename}', [BackupController::class, 'downloadBackup']);
     Route::delete('/backup/delete/{filename}', [BackupController::class, 'deleteBackup']);
@@ -121,6 +123,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // In your routes/api.php, inside the auth middleware group
 
     // Document Scanning Routes
+    Route::get('/document-scanning/check-filename', [DocumentScanningController::class, 'checkFilename']);
     Route::post('/document-scanning/upload', [DocumentScanningController::class, 'uploadDocument']);
     Route::get('/document-scanning/search', [DocumentScanningController::class, 'searchDocuments']);
     Route::get('/document-scanning/documents', [DocumentScanningController::class, 'getAllDocuments']);

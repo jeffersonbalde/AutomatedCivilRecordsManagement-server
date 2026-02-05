@@ -2,18 +2,20 @@
 // app/Http/Controllers/BackupController.php
 namespace App\Http\Controllers;
 
+use App\Models\BackupSchedule;
+use App\Services\BackupService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\DB as FacadesDB;
 use Illuminate\Support\Facades\Log;
-use PDO;
+use Illuminate\Support\Facades\Validator;
 
 class BackupController extends Controller
 {
-// app/Http/Controllers/BackupController.php
+    public function __construct(
+        private BackupService $backupService
+    ) {}
 
-public function getBackupInfo()
+    public function getBackupInfo()
 {
     try {
         $backupPath = storage_path('app/backups');
@@ -64,13 +66,21 @@ public function getBackupInfo()
             Log::warning('Could not fetch database size: ' . $e->getMessage());
         }
 
+        $schedule = BackupSchedule::getCurrent();
+
         return response()->json([
             'success' => true,
             'data' => [
                 'backups' => $backups,
                 'database_size' => $databaseSize,
                 'last_backup' => count($backups) > 0 ? $backups[0]['created_at'] : null,
-                'backup_count' => count($backups)
+                'backup_count' => count($backups),
+                'schedule' => $schedule ? [
+                    'frequency' => $schedule->frequency,
+                    'run_time' => $schedule->run_time,
+                    'day_of_week' => $schedule->day_of_week,
+                    'is_enabled' => $schedule->is_enabled,
+                ] : null,
             ]
         ]);
     } catch (\Exception $e) {
@@ -85,39 +95,24 @@ public function getBackupInfo()
     public function createBackup(Request $request)
     {
         try {
-            $backupType = $request->get('type', 'database');
-            $timestamp = Carbon::now()->format('Y-m-d_H-i-s');
-            $filename = "backup_{$timestamp}.sql";
-            $backupPath = storage_path('app/backups/' . $filename);
+            $result = $this->backupService->createBackup();
 
-            // Ensure backup directory exists
-            if (!file_exists(storage_path('app/backups'))) {
-                mkdir(storage_path('app/backups'), 0755, true);
-            }
-
-            // Create backup using pure PHP - no external dependencies
-            $this->generateMySQLDump($backupPath);
-
-            if (!file_exists($backupPath)) {
-                throw new \Exception('Backup file was not created');
-            }
-
-            // Check if file is empty
-            if (filesize($backupPath) === 0) {
-                unlink($backupPath);
-                throw new \Exception('Backup file is empty - check database connection');
+            if (!$result['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Backup creation failed: ' . ($result['message'] ?? 'Unknown error')
+                ], 500);
             }
 
             return response()->json([
                 'success' => true,
                 'message' => 'Backup created successfully',
                 'data' => [
-                    'filename' => $filename,
-                    'size' => filesize($backupPath),
-                    'created_at' => Carbon::now()->toDateTimeString()
+                    'filename' => $result['filename'],
+                    'size' => $result['size'],
+                    'created_at' => $result['created_at']
                 ]
             ]);
-
         } catch (\Exception $e) {
             Log::error('Backup creation error: ' . $e->getMessage());
             return response()->json([
@@ -125,77 +120,6 @@ public function getBackupInfo()
                 'message' => 'Backup creation failed: ' . $e->getMessage()
             ], 500);
         }
-    }
-
-    /**
-     * Generate MySQL dump using pure PHP
-     */
-    private function generateMySQLDump($filePath)
-    {
-        $dumpContent = "-- MySQL Backup\n";
-        $dumpContent .= "-- Generated: " . date('Y-m-d H:i:s') . "\n";
-        $dumpContent .= "-- Database: " . env('DB_DATABASE') . "\n\n";
-        
-        // Set SQL modes
-        $dumpContent .= "SET SQL_MODE = \"NO_AUTO_VALUE_ON_ZERO\";\n";
-        $dumpContent .= "SET AUTOCOMMIT = 0;\n";
-        $dumpContent .= "START TRANSACTION;\n";
-        $dumpContent .= "SET time_zone = \"+00:00\";\n\n";
-
-        // Get all tables
-        $tables = FacadesDB::select('SHOW TABLES');
-        
-        foreach ($tables as $table) {
-            $tableName = $table->{key($table)};
-            
-            $dumpContent .= "--\n";
-            $dumpContent .= "-- Table structure for table `$tableName`\n";
-            $dumpContent .= "--\n\n";
-            
-            // Drop table if exists
-            $dumpContent .= "DROP TABLE IF EXISTS `$tableName`;\n";
-            
-            // Get table creation SQL
-            $createTable = FacadesDB::select("SHOW CREATE TABLE `$tableName`");
-            $dumpContent .= $createTable[0]->{'Create Table'} . ";\n\n";
-            
-            // Get table data
-            $rows = FacadesDB::table($tableName)->get();
-            
-            if (count($rows) > 0) {
-                $dumpContent .= "--\n";
-                $dumpContent .= "-- Dumping data for table `$tableName`\n";
-                $dumpContent .= "--\n\n";
-                
-                // Get column names
-                $columns = array_keys((array) $rows[0]);
-                $columnList = '`' . implode('`, `', $columns) . '`';
-                
-                foreach ($rows as $row) {
-                    $values = [];
-                    foreach ((array) $row as $value) {
-                        if ($value === null) {
-                            $values[] = "NULL";
-                        } else {
-                            // Escape special characters
-                            $escapedValue = str_replace(
-                                ["\\", "\x00", "\n", "\r", "'", '"', "\x1a"],
-                                ["\\\\", "\\0", "\\n", "\\r", "\\'", '\\"', "\\Z"],
-                                $value
-                            );
-                            $values[] = "'" . $escapedValue . "'";
-                        }
-                    }
-                    $dumpContent .= "INSERT INTO `$tableName` ($columnList) VALUES (" . implode(", ", $values) . ");\n";
-                }
-                $dumpContent .= "\n";
-            }
-        }
-
-        $dumpContent .= "COMMIT;\n";
-
-        // Write to file
-        file_put_contents($filePath, $dumpContent);
     }
 
     public function downloadBackup($filename)
@@ -261,6 +185,87 @@ public function getBackupInfo()
             return response()->json([
                 'success' => false,
                 'message' => 'Delete failed'
+            ], 500);
+        }
+    }
+
+    /**
+     * Get backup schedule (Phase 1: scheduling form).
+     */
+    public function getSchedule()
+    {
+        try {
+            $schedule = BackupSchedule::getCurrent();
+            return response()->json([
+                'success' => true,
+                'data' => $schedule ? [
+                    'frequency' => $schedule->frequency,
+                    'run_time' => $schedule->run_time,
+                    'day_of_week' => $schedule->day_of_week,
+                    'is_enabled' => $schedule->is_enabled,
+                ] : null,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Backup schedule get error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get schedule',
+            ], 500);
+        }
+    }
+
+    /**
+     * Save backup schedule (Phase 1: scheduling form).
+     */
+    public function saveSchedule(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'frequency' => 'required|in:daily,weekly',
+                'run_time' => 'required|string|regex:/^\d{1,2}:\d{2}$/', // H:mm or HH:mm
+                'day_of_week' => 'nullable|integer|min:0|max:6', // 0=Sunday .. 6=Saturday
+                'is_enabled' => 'boolean',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $schedule = BackupSchedule::getCurrent();
+            if (!$schedule) {
+                $schedule = new BackupSchedule();
+            }
+
+            $parts = explode(':', trim($request->run_time));
+            $hour = isset($parts[0]) ? (int) $parts[0] : 2;
+            $minute = isset($parts[1]) ? (int) $parts[1] : 0;
+            $runTime = sprintf('%02d:%02d', $hour, $minute);
+
+            $schedule->frequency = $request->frequency;
+            $schedule->run_time = $runTime;
+            $schedule->day_of_week = $request->frequency === 'weekly' ? (int) $request->day_of_week : null;
+            $schedule->is_enabled = $request->boolean('is_enabled', true);
+            $schedule->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Backup schedule saved. Automatic backups will run according to this schedule.',
+                'data' => [
+                    'frequency' => $schedule->frequency,
+                    'run_time' => $schedule->run_time,
+                    'day_of_week' => $schedule->day_of_week,
+                    'is_enabled' => $schedule->is_enabled,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Backup schedule save error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to save schedule',
             ], 500);
         }
     }

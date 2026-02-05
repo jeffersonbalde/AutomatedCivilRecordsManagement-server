@@ -30,7 +30,15 @@ class BirthRecord extends Model
         'birth_notes',
         'date_registered',
         'encoded_by',
-        'is_active'
+        'is_active',
+        // Phase 3
+        'is_late_registration',
+        'legitimacy_status',
+        'father_acknowledgment',
+        'name_changed',
+        'current_first_name',
+        'current_middle_name',
+        'current_last_name',
     ];
 
     protected $casts = [
@@ -38,6 +46,8 @@ class BirthRecord extends Model
         'date_registered' => 'date',
         'birth_weight' => 'decimal:2',
         'is_active' => 'boolean',
+        'is_late_registration' => 'boolean',
+        'name_changed' => 'boolean',
     ];
 
     // Relationships
@@ -194,6 +204,15 @@ class BirthRecord extends Model
     public function getFullNameAttribute(): string
     {
         return trim("{$this->child_first_name} {$this->child_middle_name} {$this->child_last_name}");
+    }
+
+    /** Phase 3: Display name (current name if changed, else name at birth) */
+    public function getDisplayNameAttribute(): string
+    {
+        if ($this->name_changed && (trim($this->current_first_name ?? '') !== '' || trim($this->current_last_name ?? '') !== '')) {
+            return trim(($this->current_first_name ?? '') . ' ' . ($this->current_middle_name ?? '') . ' ' . ($this->current_last_name ?? ''));
+        }
+        return $this->full_name;
     }
 
     public function getBirthAddressAttribute(): string
